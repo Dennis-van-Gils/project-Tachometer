@@ -12,16 +12,17 @@
 
   https://github.com/Dennis-van-Gils/project-Tachometer
   Dennis van Gils
-  01-09-2022
+  02-09-2022
 *******************************************************************************/
 
 #include <Arduino.h>
 #include <SPI.h>
 #include <Wire.h>
 
-#include <Adafruit_GFX.h>
-#include <Adafruit_SSD1306.h>
-#include <avdweb_Switch.h>
+#include "Adafruit_GFX.h"
+#include "Adafruit_SSD1306.h"
+#include "DvG_StreamCommand.h"
+#include "avdweb_Switch.h"
 
 // Tacho settings
 const uint8_t PIN_TACHO = 10;
@@ -36,25 +37,30 @@ Switch button_B = Switch(PIN_BUTTON_B, INPUT_PULLUP);
 Switch button_C = Switch(PIN_BUTTON_C, INPUT_PULLUP);
 
 Adafruit_SSD1306 display = Adafruit_SSD1306(128, 32, &Wire);
-const uint32_t T_display = 500; // Display refresh rate [ms]
+const uint16_t T_DISPLAY = 500;       // [ms] Display refresh rate
+const uint16_t T_SCREENSAVER = 20000; // [ms] Turn display off when at 0 RPM
+
+// Instantiate serial port listener for receiving ASCII commands
+const uint8_t CMD_BUF_LEN = 16;  // Length of the ASCII command buffer
+char cmd_buf[CMD_BUF_LEN]{'\0'}; // The ASCII command buffer
+DvG_StreamCommand sc(Serial, cmd_buf, CMD_BUF_LEN);
 
 /*------------------------------------------------------------------------------
   Frequency detector
 ------------------------------------------------------------------------------*/
 
-const uint16_t N_AVG = 10;     // Number of light up-flanks to average over
-const uint16_t TIMEOUT = 2000; // [ms] Timeout to stop detecting the frequency
+const uint16_t N_UPFLANKS = 25;    // Number of up-flanks to average over
+const uint16_t ISR_TIMEOUT = 4000; // [ms] Timeout to stop waiting for the ISR
 
 volatile bool isr_done = false;
 volatile uint8_t isr_counter = 0;
-volatile uint32_t T_upflanks = 0; // [us] Measured duration for N_AVG up-flanks
+volatile uint32_t T_upflanks = 0; // [us] Measured duration for N_UPFLANKS
 
-double frequency = 0; // [Hz] Measured average frequency of light up-flanks
-double RPM = 0;       // [RPM] Measured RPM
+double freq = NAN; // [Hz]  Measured frequency
+double RPM = NAN;  // [RPM] Measured RPM
 
 void isr_rising() {
-  /* Interrupt service routine for when an up-flank is detected on the input pin
-   */
+  // Interrupt service routine for when an up-flank is detected on the input pin
   static uint32_t micros_start = 0;
 
   if (!isr_done) {
@@ -62,28 +68,11 @@ void isr_rising() {
       micros_start = micros();
     }
     isr_counter++;
-    if (isr_counter > N_AVG) {
+    if (isr_counter > N_UPFLANKS) {
       T_upflanks = micros() - micros_start;
       isr_done = true;
     }
   }
-}
-
-bool measure_frequency() {
-  uint32_t t_0 = millis();
-  isr_counter = 0;
-  isr_done = false;
-  while ((!isr_done) && ((millis() - t_0) < TIMEOUT)) {}
-
-  if (isr_done) {
-    frequency = 1000000. * N_AVG / T_upflanks;
-    RPM = frequency / N_SLITS_ON_DISK * 60.;
-  } else {
-    frequency = 0;
-    RPM = 0;
-  }
-
-  return isr_done;
 }
 
 /*------------------------------------------------------------------------------
@@ -91,7 +80,7 @@ bool measure_frequency() {
 ------------------------------------------------------------------------------*/
 
 void setup() {
-  //Serial.begin(9600);
+  Serial.begin(9600);
 
   // Tacho input
   pinMode(PIN_TACHO, INPUT_PULLDOWN);
@@ -112,7 +101,21 @@ void setup() {
 void loop() {
   uint32_t now = millis();
   static uint32_t tick = now;
+  static uint32_t tick_isr = now;
   static bool alive_blinker = true;
+  static bool update_anim = false;
+  static uint8_t anim = 0;
+
+  // Listen for commands on the serial port
+  if (sc.available()) {
+    char *str_cmd = sc.getCommand();
+
+    if (strcmp(str_cmd, "id?") == 0) {
+      Serial.println("Arduino, Tachometer");
+    } else {
+      Serial.println(RPM);
+    }
+  }
 
   // Read the buttons
   /*
@@ -124,32 +127,72 @@ void loop() {
   if (button_C.pushed()) {}
   */
 
-  // Refresh screen
-  if (now - tick >= T_display) {
-    tick = now;
-    display.clearDisplay();
-
-    // Draw RPM value
-    display.setCursor(0, 0);
-    display.setTextSize(3);
-    if (measure_frequency()) {
-      display.print(RPM, 2);
-    }
-
-    // Draw "RPM"
-    display.setTextSize(1);
-    // display.setCursor(110, 25); // Lower-right
-    display.setCursor(110, 0); // Upper-right
-    display.print("RPM");
-
-    // Draw alive blinker
-    alive_blinker = !alive_blinker;
-    if (alive_blinker) {
-      display.fillRect(0, 26, 6, 6, SSD1306_WHITE);
-    }
-
-    display.display();
+  if (isr_done) {
+    freq = 1000000. / T_upflanks * N_UPFLANKS;
+    RPM = freq / N_SLITS_ON_DISK * 60.;
+    update_anim = true;
+    isr_counter = 0;
+    isr_done = false;
+    tick_isr = now;
   }
 
-  delay(10);
+  if (now - tick_isr > ISR_TIMEOUT) {
+    freq = NAN;
+    RPM = NAN;
+  }
+
+  // Refresh display
+  if (now - tick_isr > T_SCREENSAVER) {
+    // Screensaver engaged
+    display.clearDisplay();
+    display.display();
+    delay(100);
+
+  } else {
+    if (now - tick >= T_DISPLAY) {
+      tick = now;
+      display.clearDisplay();
+
+      // Draw RPM value
+      display.setCursor(0, 0);
+      display.setTextSize(3);
+      if (!isnan(RPM)) {
+        display.print(RPM, 2);
+      } else {
+        display.print("<");
+        display.print(
+            1. / (ISR_TIMEOUT / 1000. / N_UPFLANKS) / N_SLITS_ON_DISK * 60, 1);
+      }
+
+      // Draw "RPM"
+      display.setTextSize(1);
+      display.setCursor(110, 0); // Upper-right
+      display.print("RPM");
+
+      // Draw alive blinker
+      alive_blinker = !alive_blinker;
+      if (alive_blinker) {
+        display.fillRect(0, 26, 6, 6, SSD1306_WHITE);
+      }
+
+      // Draw new readout animation
+      display.setTextSize(2);
+      display.setCursor(112, 19);
+      if (update_anim) {
+        update_anim = false;
+        anim = ((anim + 1) % 4);
+      }
+      if (anim == 0) {
+        display.print("|");
+      } else if (anim == 1) {
+        display.print("/");
+      } else if (anim == 2) {
+        display.print("-");
+      } else if (anim == 3) {
+        display.print("\\");
+      }
+
+      display.display();
+    }
+  }
 }

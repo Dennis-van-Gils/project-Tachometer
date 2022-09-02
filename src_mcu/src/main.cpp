@@ -25,7 +25,7 @@
 
 // Tacho settings
 const uint8_t PIN_TACHO = 10;
-const uint8_t N_SLITS_ON_DISK = 50;
+const uint8_t N_SLITS_ON_DISK = 25;
 
 // OLED display
 const uint8_t PIN_BUTTON_A = 9;
@@ -42,8 +42,8 @@ const uint32_t T_display = 500; // Display refresh rate [ms]
   Frequency detector
 ------------------------------------------------------------------------------*/
 
-const uint16_t N_AVG = 10;    // Number of up-flanks to average over
-const uint16_t TIMEOUT = 3000; // [ms] Timeout to stop detecting the frequency
+const uint16_t N_AVG = 10;     // Number of light up-flanks to average over
+const uint16_t TIMEOUT = 2000; // [ms] Timeout to stop detecting the frequency
 
 volatile bool isr_done = false;
 volatile uint8_t isr_counter = 0;
@@ -91,7 +91,7 @@ bool measure_frequency() {
 ------------------------------------------------------------------------------*/
 
 void setup() {
-  Serial.begin(9600);
+  //Serial.begin(9600);
 
   // Tacho input
   pinMode(PIN_TACHO, INPUT_PULLDOWN);
@@ -113,18 +113,16 @@ void loop() {
   uint32_t now = millis();
   static uint32_t tick = now;
   static bool alive_blinker = true;
-  bool light;
-
-  // light = digitalRead(PIN_TACHO);
-  light = digitalRead(PIN_BUTTON_C);
 
   // Read the buttons
+  /*
   button_A.poll();
   button_B.poll();
   button_C.poll();
-  if (button_C.pushed()) {
-    alive_blinker = !alive_blinker;
-  }
+  if (button_A.pushed()) {}
+  if (button_B.pushed()) {}
+  if (button_C.pushed()) {}
+  */
 
   // Refresh screen
   if (now - tick >= T_display) {
@@ -135,10 +133,7 @@ void loop() {
     display.setCursor(0, 0);
     display.setTextSize(3);
     if (measure_frequency()) {
-      display.print(RPM, 3);
-      Serial.print(frequency, 2);
-      Serial.write('\t');
-      Serial.println(RPM, 3);
+      display.print(RPM, 2);
     }
 
     // Draw "RPM"

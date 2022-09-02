@@ -14,3 +14,5 @@ Hardware
 * Adafruit #3857: Adafruit Feather M4 Express - Featuring ATSAMD51 Cortex M4
 * Adafruit #2900: Adafruit FeatherWing OLED - 128x32 OLED Add-on For Feather
 * OMRON EE-SX1041 Transmissive Photomicrosensor
+
+Click `here <https://github.com/Dennis-van-Gils/project-Tachometer/blob/main/docs/schematic_diagram.pdf>`_ for the electronic wiring diagram.

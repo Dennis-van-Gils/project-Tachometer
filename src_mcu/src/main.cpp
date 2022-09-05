@@ -1,8 +1,13 @@
 /*******************************************************************************
   Tachometer
 
-  A stand-alone Arduino tachometer using a transmissive photointerrupter with a
-  slotted disk. The RPMs are displayed on an OLED screen.
+  A stand-alone Arduino tachometer using a transmissive photointerrupter with an
+  optical encoder disk.
+
+  The rotation rate is displayed on an OLED screen. The units can be switched
+  between RPM, rev/s and rad/s by pressing one of the OLED screen buttons. The
+  display will go blank when no rotation has been detected after a certain
+  timeout period.
 
   Hardware:
   - Adafruit Feather M4 Express (Adafruit #3857)
@@ -12,7 +17,7 @@
 
   https://github.com/Dennis-van-Gils/project-Tachometer
   Dennis van Gils
-  02-09-2022
+  05-09-2022
 *******************************************************************************/
 
 #include <Arduino.h>
@@ -25,8 +30,22 @@
 #include "avdweb_Switch.h"
 
 // Tacho settings
+enum class TACHO_UNIT {
+  RPM,   // rounds per minute
+  REVPS, // revolutions per second
+  RADPS, // rad per second
+  EOL    // end-of-list
+};
+
 const uint8_t PIN_TACHO = 10;
-const uint8_t N_SLITS_ON_DISK = 25;
+const uint8_t N_SLITS_ON_DISK = 25; // Optical encoder disk
+TACHO_UNIT unit = TACHO_UNIT::RPM;
+
+// An interrupt service routine (ISR) will execute once an up-flank on the
+// digital input of pin PIN_TACHO is detected. A single up-flank corresponds to
+// light hitting the photodiode after having been dark.
+const uint16_t N_UPFLANKS = 25;    // Number of up-flanks to average over
+const uint16_t ISR_TIMEOUT = 4000; // [ms] Timeout to stop waiting for the ISR
 
 // OLED display
 const uint8_t PIN_BUTTON_A = 9;
@@ -49,15 +68,15 @@ DvG_StreamCommand sc(Serial, cmd_buf, CMD_BUF_LEN);
   Frequency detector
 ------------------------------------------------------------------------------*/
 
-const uint16_t N_UPFLANKS = 25;    // Number of up-flanks to average over
-const uint16_t ISR_TIMEOUT = 4000; // [ms] Timeout to stop waiting for the ISR
+// Minimum detectable rotation rates
+const double MIN_REVPS = 1000. * N_UPFLANKS / ISR_TIMEOUT / N_SLITS_ON_DISK;
+const double MIN_RPM = MIN_REVPS * 60;
+const double MIN_RADPS = MIN_REVPS * TWO_PI;
 
 volatile bool isr_done = false;
 volatile uint8_t isr_counter = 0;
 volatile uint32_t T_upflanks = 0; // [us] Measured duration for N_UPFLANKS
-
-double freq = NAN; // [Hz]  Measured frequency
-double RPM = NAN;  // [RPM] Measured RPM
+double freq_upflanks = NAN;       // [Hz] Measured up-flank frequency
 
 void isr_rising() {
   // Interrupt service routine for when an up-flank is detected on the input pin
@@ -106,30 +125,8 @@ void loop() {
   static bool update_anim = false;
   static uint8_t anim = 0;
 
-  // Listen for commands on the serial port
-  if (sc.available()) {
-    char *str_cmd = sc.getCommand();
-
-    if (strcmp(str_cmd, "id?") == 0) {
-      Serial.println("Arduino, Tachometer");
-    } else {
-      Serial.println(RPM);
-    }
-  }
-
-  // Read the buttons
-  /*
-  button_A.poll();
-  button_B.poll();
-  button_C.poll();
-  if (button_A.pushed()) {}
-  if (button_B.pushed()) {}
-  if (button_C.pushed()) {}
-  */
-
   if (isr_done) {
-    freq = 1000000. / T_upflanks * N_UPFLANKS;
-    RPM = freq / N_SLITS_ON_DISK * 60.;
+    freq_upflanks = 1000000. / T_upflanks * N_UPFLANKS;
     update_anim = true;
     isr_counter = 0;
     isr_done = false;
@@ -137,8 +134,55 @@ void loop() {
   }
 
   if (now - tick_isr > ISR_TIMEOUT) {
-    freq = NAN;
-    RPM = NAN;
+    freq_upflanks = NAN;
+  }
+
+  double tacho_revps = freq_upflanks / N_SLITS_ON_DISK;
+  double tacho_rpm = tacho_revps * 60.;
+  double tacho_radps = tacho_revps * TWO_PI;
+
+  // Listen for commands on the serial port
+  if (sc.available()) {
+    char *str_cmd = sc.getCommand();
+
+    if (strcmp(str_cmd, "id?") == 0) {
+      // Reply identity string
+      Serial.println("Arduino, Tachometer v1.0");
+
+    } else if (strncmp(str_cmd, "u", 1) == 0) {
+      // Change unit
+      uint8_t new_unit = parseIntInString(str_cmd, 1);
+      if (new_unit == int(TACHO_UNIT::REVPS)) {
+        unit = TACHO_UNIT::REVPS;
+      } else if (new_unit == int(TACHO_UNIT::RADPS)) {
+        unit = TACHO_UNIT::RADPS;
+      } else {
+        unit = TACHO_UNIT::RPM;
+      }
+
+    } else {
+      // Report rotation rate
+      if (unit == TACHO_UNIT::RPM) {
+        Serial.print(tacho_rpm, tacho_rpm < 100 ? 2 : 1);
+        Serial.println(" rpm");
+
+      } else if (unit == TACHO_UNIT::REVPS) {
+        Serial.print(tacho_revps, tacho_revps < 10 ? 3 : 2);
+        Serial.println(" rev/s");
+
+      } else if (unit == TACHO_UNIT::RADPS) {
+        Serial.print(tacho_radps, tacho_radps < 10 ? 3 : 2);
+        Serial.println(" rad/s");
+      }
+    }
+  }
+
+  // Read the buttons
+  button_A.poll();
+  button_B.poll();
+  button_C.poll();
+  if (button_A.pushed() || button_B.pushed() || button_C.pushed()) {
+    unit = static_cast<TACHO_UNIT>((int(unit) + 1) % int(TACHO_UNIT::EOL));
   }
 
   // Refresh display
@@ -153,26 +197,52 @@ void loop() {
       tick = now;
       display.clearDisplay();
 
-      // Draw RPM value
+      // Draw rotation rate value
       display.setCursor(0, 0);
       display.setTextSize(3);
-      if (!isnan(RPM)) {
-        display.print(RPM, 2);
-      } else {
-        display.print("<");
-        display.print(
-            1. / (ISR_TIMEOUT / 1000. / N_UPFLANKS) / N_SLITS_ON_DISK * 60, 1);
-      }
 
-      // Draw "RPM"
-      display.setTextSize(1);
-      display.setCursor(110, 0); // Upper-right
-      display.print("RPM");
+      if (unit == TACHO_UNIT::RPM) {
+        if (!isnan(freq_upflanks)) {
+          display.print(tacho_rpm, tacho_rpm < 100 ? 2 : 1);
+        } else {
+          display.print("<");
+          display.print(MIN_RPM);
+        }
+        display.setTextSize(1);
+        display.setCursor(110, 0);
+        display.print("RPM");
+
+      } else if (unit == TACHO_UNIT::REVPS) {
+        if (!isnan(freq_upflanks)) {
+          display.print(tacho_revps, tacho_revps < 10 ? 3 : 2);
+        } else {
+          display.print("<");
+          display.print(MIN_REVPS);
+        }
+        display.setTextSize(1);
+        display.setCursor(110, 0);
+        display.print("REV");
+        display.setCursor(110, 8);
+        display.print("/S");
+
+      } else if (unit == TACHO_UNIT::RADPS) {
+        if (!isnan(freq_upflanks)) {
+          display.print(tacho_radps, tacho_radps < 10 ? 3 : 2);
+        } else {
+          display.print("<");
+          display.print(MIN_RADPS);
+        }
+        display.setTextSize(1);
+        display.setCursor(110, 0);
+        display.print("RAD");
+        display.setCursor(110, 8);
+        display.print("/S");
+      }
 
       // Draw alive blinker
       alive_blinker = !alive_blinker;
       if (alive_blinker) {
-        display.fillRect(0, 26, 6, 6, SSD1306_WHITE);
+        display.fillRect(0, 30, 2, 2, SSD1306_WHITE);
       }
 
       // Draw new readout animation

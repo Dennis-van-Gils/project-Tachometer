@@ -12,8 +12,8 @@ between RPM, rev/s and rad/s by pressing one of the OLED screen buttons. The
 display will go blank when no rotation has been detected after a certain
 timeout period.
 
-Change the global constant `N_SLITS_ON_DISK` to match the number of slits on
-your encoder disk.
+Change the global constant `N_SLITS_ON_DISK` of `main.cpp` to match the number
+of slits on your encoder disk.
 
 - Github: https://github.com/Dennis-van-Gils/project-Tachometer
 

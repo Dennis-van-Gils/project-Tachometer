@@ -110,7 +110,14 @@ void setup() {
   display.clearDisplay();                    // Clear the buffer
   display.setTextColor(SSD1306_WHITE);
   display.setCursor(0, 0);
+  display.setTextSize(1);
+  display.print("GITHUB.COM/");
+  display.setCursor(0, 12);
+  display.print("DENNIS-VAN-GILS/");
+  display.setCursor(0, 24);
+  display.print("PROJECT-TACHOMETER");
   display.display();
+  delay(4000);
 }
 
 /*------------------------------------------------------------------------------

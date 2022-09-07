@@ -17,7 +17,7 @@
 
   https://github.com/Dennis-van-Gils/project-Tachometer
   Dennis van Gils
-  05-09-2022
+  07-09-2022
 *******************************************************************************/
 
 #include <Arduino.h>
@@ -38,13 +38,13 @@ enum class TACHO_UNIT {
 };
 
 const uint8_t PIN_TACHO = 10;
-const uint8_t N_SLITS_ON_DISK = 25; // Optical encoder disk
+const uint8_t N_SLITS_ON_DISK = 24; // Optical encoder disk
 TACHO_UNIT unit = TACHO_UNIT::RPM;
 
 // An interrupt service routine (ISR) will execute once an up-flank on the
 // digital input of pin PIN_TACHO is detected. A single up-flank corresponds to
 // light hitting the photodiode after having been dark.
-const uint16_t N_UPFLANKS = 25;    // Number of up-flanks to average over
+const uint16_t N_UPFLANKS = 24;    // Number of up-flanks to average over
 const uint16_t ISR_TIMEOUT = 4000; // [ms] Timeout to stop waiting for the ISR
 
 // OLED display
